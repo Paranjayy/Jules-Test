@@ -31,14 +31,17 @@ function ThreePanelLayout({
   searchBarFocusRequested,
   typesFilterFocusRequested,
   newButtonFocusRequested,
-  focusedPanel, // Added focusedPanel
+  focusedPanel, 
 
   // Props for BottomBar
   statusMessage,
   selectedClipIdsForBottomBar, 
   activeClipForBottomBar,
   onRequestPasteForBottomBar,
-  onShowActionsPaletteForBottomBar
+  onShowActionsPaletteForBottomBar,
+  
+  // Navigation
+  onNavigate // Added onNavigate for LeftSidebar
 }) {
   return (
     <div className="flex flex-col h-screen bg-gray-100">
@@ -57,7 +60,8 @@ function ThreePanelLayout({
           onFolderSelect={onFolderSelect}
           activeTagId={activeTagId}
           onTagSelect={onTagSelect}
-          isFocused={focusedPanel === 'folders'} // Pass isFocused
+          isFocused={focusedPanel === 'folders'} 
+          onNavigate={onNavigate} // Pass onNavigate
         />
         <ClipsList
           activeFolderId={activeFolderId}

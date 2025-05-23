@@ -22,3 +22,12 @@
     - Logs detected clips to the console.
     - **Note on Source Application Detection:** The current implementation makes a best-effort attempt to read source application information (e.g., `clipboard.read('public.source')` on macOS). This is platform-dependent and may not be fully reliable or implemented for all platforms (e.g., Windows requires more complex solutions). Further work will be needed for robust, cross-platform source application identification.
 - Integrated `ClipboardMonitor` into `src/main.js` (start/stop with app lifecycle).
+
+## Phase 2.3: Advanced Metadata & Preview (Clipboard Manager Enhancements) - In Progress
+- **Database & Metadata Enhancements**:
+  - Added `last_edited_at` field to `clips` table in `src/database.js` and `OmniLaunch.md`.
+  - Ensured `update-clip-title` IPC handler updates `last_edited_at`.
+  - **Deferred:** LLM Tokenizer count for clips due to potential performance impact and complexity.
+- **Preview Enhancements**: (Partially started)
+- **Editable Previews**: (Partially started)
+- **More Actions (`Cmd+K`)**: (Partially started)
