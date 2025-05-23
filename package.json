@@ -1,0 +1,23 @@
+{
+  "name": "omnilaunch",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:tailwind": "tailwindcss -i ./src/styles.css -o ./dist/styles.css",
+    "watch:tailwind": "tailwindcss -i ./src/styles.css -o ./dist/styles.css --watch"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.21",
+    "electron": "^36.3.1",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^4.1.7"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "robotjs": "^0.6.0"
+  }
+}
