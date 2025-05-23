@@ -1,14 +1,16 @@
-const { app, BrowserWindow, ipcMain, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, nativeImage, globalShortcut } = require('electron');
 const path = require('path');
 const ClipboardMonitor = require('./clipboard-monitor');
 const { initializeDatabase, getDb } = require('./database');
 
 let clipboardMonitor;
+let mainWindow; // Make mainWindow accessible
+let pasteStackWindow = null; // Variable to hold the paste stack window instance
 
-function createWindow () {
-  const mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+function createMainWindow () {
+  mainWindow = new BrowserWindow({ // Assign to mainWindow
+    width: 1000, // Increased width to accommodate three panels better
+    height: 700, // Increased height
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'), // if you use a preload script
       contextIsolation: true,
@@ -16,37 +18,76 @@ function createWindow () {
     }
   });
 
-  // Load index.html (you'll create this for your React app)
-  // For development, you might load from a dev server:
-  // mainWindow.loadURL('http://localhost:3000'); 
-  // For a production build:
-  mainWindow.loadFile(path.join(__dirname, 'index.html')); // Load from src/index.html
+  mainWindow.loadFile(path.join(__dirname, 'index.html')); 
 
-  // Open the DevTools.
-  // mainWindow.webContents.openDevTools();
+  // mainWindow.webContents.openDevTools(); // For main window
+  
+  mainWindow.on('closed', () => {
+    mainWindow = null; // Dereference on close
+  });
 }
 
-app.whenReady().then(() => {
-  createWindow();
+function createPasteStackWindow() {
+  if (pasteStackWindow) {
+    pasteStackWindow.focus();
+    return;
+  }
 
-  initializeDatabase(app); // Initialize the database
+  pasteStackWindow = new BrowserWindow({
+    width: 400,
+    height: 500,
+    alwaysOnTop: true,
+    frame: true, // Show frame for now, can be false for custom title bar later
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'), // Re-use existing preload for now
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+    // parent: mainWindow, // Optional: makes it a child window
+    // modal: true, // Optional: makes it modal to mainWindow
+    show: false, // Don't show immediately
+  });
+
+  // Load a new HTML file for the paste stack window
+  pasteStackWindow.loadFile(path.join(__dirname, '../dist/pasteStack.html')); 
+  // Note: The path should be relative to main.js in 'src', so if HTML is in 'dist', it's '../dist/pasteStack.html'
+  // For development, if you serve HTML from src, it might be path.join(__dirname, 'pasteStack.html')
+
+  pasteStackWindow.once('ready-to-show', () => {
+    pasteStackWindow.show();
+    // pasteStackWindow.webContents.openDevTools(); // For paste stack window
+  });
+
+  pasteStackWindow.on('closed', () => {
+    pasteStackWindow = null;
+  });
+}
+
+
+app.whenReady().then(() => {
+  createMainWindow(); // Changed from createWindow
+  initializeDatabase(app);
 
   clipboardMonitor = new ClipboardMonitor();
   clipboardMonitor.start();
 
   // Example: Listen for new clips (optional for this phase, but good for testing)
-  clipboardMonitor.on('new-clip-added', (clipWithId) => { // Changed from 'new-clip'
+  clipboardMonitor.on('new-clip-added', (clipWithId) => { 
     console.log('Main process: new clip ADDED to DB:', clipWithId.id, clipWithId.content_type, clipWithId.preview_text.substring(0,50));
-    // Notify renderer that clips have been updated
-    const focusedWindow = BrowserWindow.getFocusedWindow();
-    if (focusedWindow) {
-        focusedWindow.webContents.send('clips-updated');
-    } else {
-        // If no window is focused, send to all windows or the main window
-        const allWindows = BrowserWindow.getAllWindows();
-        if (allWindows.length > 0) {
-            allWindows[0].webContents.send('clips-updated'); // Assuming first window is main
-        }
+    
+    // Notify main window renderer that clips have been updated
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('clips-updated');
+    } else { // Fallback if mainWindow is not available or focusedWindow logic is preferred
+        const mainRendererWindows = BrowserWindow.getAllWindows().filter(win => win !== pasteStackWindow);
+        mainRendererWindows.forEach(win => win.webContents.send('clips-updated'));
+    }
+
+    // Send to Paste Stack window if it's open
+    if (pasteStackWindow && pasteStackWindow.webContents) {
+      // Consider adding a check here if paste stack is "active" or "not paused"
+      // This might be managed by a state in the main process or an IPC message from paste stack window
+      pasteStackWindow.webContents.send('add-to-paste-stack', clipWithId);
     }
   });
 
@@ -215,7 +256,7 @@ app.whenReady().then(() => {
     const currentDb = getDb();
     if (!currentDb) return { success: false, error: 'Database not initialized' };
     try {
-      currentDb.prepare('UPDATE clips SET title = ? WHERE id = ?').run(newTitle, clipId);
+      currentDb.prepare('UPDATE clips SET title = ?, last_edited_at = datetime(\'now\') WHERE id = ?').run(newTitle, clipId);
       // Notify renderer that clip details might have changed (if title is shown in ClipsList)
       const focusedWindow = BrowserWindow.getFocusedWindow();
       if (focusedWindow) focusedWindow.webContents.send('clips-updated'); 
@@ -514,6 +555,459 @@ app.whenReady().then(() => {
     }
   });
 
+  ipcMain.handle('paste-stack-item-sequentially', async (event, clipData) => {
+    // This handler is specifically for the paste stack to paste items without
+    // affecting the main OmniLaunch window visibility or focus as much as 'paste-clip' might.
+    // It also doesn't update last_pasted_at or times_pasted for the original clip,
+    // as this is a stack paste, not a direct paste of an original clip.
+    if (!clipData || clipData.data === undefined || clipData.content_type === undefined) {
+      return { success: false, error: 'Invalid clip data provided for sequential paste.' };
+    }
+    
+    try {
+      if (clipData.content_type === 'text' || clipData.content_type === 'link') {
+        clipboard.writeText(clipData.data);
+      } else if (clipData.content_type === 'image') {
+        const nativeImg = nativeImage.createFromDataURL(clipData.data);
+        clipboard.writeImage(nativeImg);
+      } else {
+        return { success: false, error: 'Unsupported clip type for sequential paste' };
+      }
+
+      // Simulate Ctrl/Cmd+V
+      const robot = require('robotjs');
+      // For sequential paste, we assume the user has focused the target application.
+      // We avoid hiding any OmniLaunch windows here.
+      robot.keyTap('v', process.platform === 'darwin' ? 'command' : 'control');
+      
+      return { success: true };
+    } catch (err) {
+      console.error('Error in paste-stack-item-sequentially:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('save-paste-stack-history', async (event, items, runName) => {
+    const currentDb = getDb();
+    if (!currentDb) return { success: false, error: 'Database not initialized' };
+    if (!items || items.length === 0) return { success: true, message: 'No items to save.' }; // Not an error
+
+    try {
+      // Begin a transaction
+      currentDb.exec('BEGIN');
+
+      const runStmt = currentDb.prepare('INSERT INTO paste_stack_runs (name, created_at) VALUES (?, datetime(\'now\'))');
+      const runInfo = runStmt.run(runName || null); // Allow optional run name
+      const runId = runInfo.lastInsertRowid;
+
+      const itemStmt = currentDb.prepare('INSERT INTO paste_stack_run_items (run_id, clip_id, sequence_order) VALUES (?, ?, ?)');
+      for (let i = 0; i < items.length; i++) {
+        // items are expected to be full clip objects, we only need the original clip_id (item.id from 'clips' table)
+        // The stack items are typically in reverse chronological order (newest at top)
+        // If we want to preserve this visual order as sequence_order, we can use i directly.
+        // Or if items array is already in desired sequence order from client.
+        itemStmt.run(runId, items[i].id, i); 
+      }
+
+      currentDb.exec('COMMIT');
+      return { success: true, runId };
+    } catch (err) {
+      if (currentDb.inTransaction) {
+        currentDb.exec('ROLLBACK');
+      }
+      console.error('Error saving paste stack history:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Snippet Folder Handlers
+  ipcMain.handle('get-snippet-folders', async () => {
+    const currentDb = getDb();
+    if (!currentDb) return { error: 'Database not initialized' };
+    try {
+      return currentDb.prepare('SELECT * FROM snippet_folders ORDER BY name ASC').all();
+    } catch (err) {
+      console.error('Error getting snippet folders:', err);
+      return { error: err.message };
+    }
+  });
+
+  ipcMain.handle('add-snippet-folder', async (event, name) => {
+    const currentDb = getDb();
+    if (!currentDb) return { error: 'Database not initialized' };
+    try {
+      const info = currentDb.prepare('INSERT INTO snippet_folders (name) VALUES (?)').run(name);
+      return { success: true, id: info.lastInsertRowid, name };
+    } catch (err) {
+      console.error('Error adding snippet folder:', err);
+      return { error: err.message };
+    }
+  });
+
+  // Snippet Handlers
+  ipcMain.handle('get-snippets', async (event, folderId) => {
+    const currentDb = getDb();
+    if (!currentDb) return { error: 'Database not initialized' };
+    try {
+      let query = 'SELECT * FROM snippets';
+      const params = [];
+      if (folderId && folderId !== 'all' && folderId !== 'inbox') { // 'inbox' might mean no folder
+        query += ' WHERE folder_id = ?';
+        params.push(folderId);
+      } else if (folderId === 'inbox' || folderId === null || folderId === undefined) {
+        query += ' WHERE folder_id IS NULL';
+      }
+      query += ' ORDER BY title ASC';
+      return currentDb.prepare(query).all(...params);
+    } catch (err) {
+      console.error('Error getting snippets:', err);
+      return { error: err.message };
+    }
+  });
+
+  ipcMain.handle('add-snippet', async (event, snippetData) => {
+    const currentDb = getDb();
+    if (!currentDb) return { error: 'Database not initialized' };
+    const { title, content, folder_id, keyword } = snippetData;
+    try {
+      const stmt = currentDb.prepare(
+        'INSERT INTO snippets (title, content, folder_id, keyword, created_at) VALUES (?, ?, ?, ?, datetime(\'now\'))'
+      );
+      const targetFolderId = (folder_id === 'inbox' || folder_id === 'none' || folder_id === undefined) ? null : folder_id;
+      const info = stmt.run(title, content, targetFolderId, keyword || null);
+      // Notify main window renderer that snippets have been updated
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('snippets-updated');
+      }
+      return { success: true, id: info.lastInsertRowid };
+    } catch (err) {
+      console.error('Error adding snippet:', err);
+      return { error: err.message };
+    }
+  });
+
+  ipcMain.handle('update-snippet', async (event, snippetId, snippetData) => {
+    const currentDb = getDb();
+    if (!currentDb) return { error: 'Database not initialized' };
+    const { title, content, folder_id, keyword } = snippetData;
+    try {
+      const targetFolderId = (folder_id === 'inbox' || folder_id === 'none' || folder_id === undefined) ? null : folder_id;
+      currentDb.prepare(
+        'UPDATE snippets SET title = ?, content = ?, folder_id = ?, keyword = ? WHERE id = ?'
+      ).run(title, content, targetFolderId, keyword || null, snippetId);
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('snippets-updated');
+      }
+      return { success: true };
+    } catch (err) {
+      console.error('Error updating snippet:', err);
+      return { error: err.message };
+    }
+  });
+
+  ipcMain.handle('delete-snippet', async (event, snippetId) => {
+    const currentDb = getDb();
+    if (!currentDb) return { error: 'Database not initialized' };
+    try {
+      currentDb.prepare('DELETE FROM snippets WHERE id = ?').run(snippetId);
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('snippets-updated');
+      }
+      return { success: true };
+    } catch (err) {
+      console.error('Error deleting snippet:', err);
+      return { error: err.message };
+    }
+  });
+
+  ipcMain.handle('get-snippet-by-id', async (event, snippetId) => {
+    const currentDb = getDb();
+    if (!currentDb) return { error: 'Database not initialized' };
+    try {
+      return currentDb.prepare('SELECT * FROM snippets WHERE id = ?').get(snippetId);
+    } catch (err) {
+      console.error('Error getting snippet by ID:', err);
+      return { error: err.message };
+    }
+  });
+  
+  ipcMain.handle('paste-snippet-content', async (event, snippetId) => {
+    const currentDb = getDb();
+    if (!currentDb) return { success: false, error: 'Database not initialized' };
+    try {
+      const snippet = currentDb.prepare('SELECT * FROM snippets WHERE id = ?').get(snippetId);
+      if (!snippet) return { success: false, error: 'Snippet not found' };
+
+      let processedContent = snippet.content;
+      // Replace placeholders
+      processedContent = processedContent.replace(/{clipboard}/g, clipboard.readText());
+      processedContent = processedContent.replace(/{date}/g, new Date().toLocaleDateString());
+      processedContent = processedContent.replace(/{time}/g, new Date().toLocaleTimeString());
+      processedContent = processedContent.replace(/{cursor}/g, ''); // Remove {cursor} for now
+
+      clipboard.writeText(processedContent);
+
+      const robot = require('robotjs');
+      const focusedWin = BrowserWindow.getFocusedWindow();
+      if (focusedWin && focusedWin.isVisible() && focusedWin !== pasteStackWindow && focusedWin !== mainWindow) {
+        // If an external window is focused, just paste.
+      } else if (mainWindow && mainWindow.isVisible()) {
+         // If our main window is focused or no specific external window, hide main before paste.
+         // This logic might need refinement depending on which window should be hidden.
+         // For snippets, we usually want to paste into another app.
+         mainWindow.hide();
+         await new Promise(resolve => setTimeout(resolve, 200)); // Delay for focus switch
+      }
+      // If pasteStackWindow is focused, we probably don't want to hide it.
+      // The current logic above focuses on hiding mainWindow if it's the one in foreground.
+
+      robot.keyTap('v', process.platform === 'darwin' ? 'command' : 'control');
+      
+      // Update usage stats
+      currentDb.prepare(
+        'UPDATE snippets SET last_used_at = datetime(\'now\'), times_used = times_used + 1 WHERE id = ?'
+      ).run(snippetId);
+      
+      // Optionally, bring mainWindow back if it was hidden
+      // if (mainWindow && !mainWindow.isVisible() && !pasteStackWindow) mainWindow.show();
+
+      return { success: true };
+    } catch (err) {
+      console.error('Error pasting snippet content:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('search-snippets', async (event, searchTerm, folderId) => {
+    const currentDb = getDb();
+    if (!currentDb) return { error: 'Database not initialized' };
+    
+    try {
+      let query = `
+        SELECT * FROM snippets 
+        WHERE (title LIKE ? OR content LIKE ? OR keyword LIKE ?)
+      `;
+      const params = [`%${searchTerm}%`, `%${searchTerm}%`, `%${searchTerm}%`];
+
+      if (folderId && folderId !== 'all' && folderId !== 'inbox') {
+        query += ' AND folder_id = ?';
+        params.push(folderId);
+      } else if (folderId === 'inbox' || folderId === null || folderId === undefined) {
+        query += ' AND folder_id IS NULL';
+      }
+      // If folderId is 'all', no additional folder_id filtering.
+
+      query += ' ORDER BY title ASC';
+      return currentDb.prepare(query).all(...params);
+    } catch (err) {
+      console.error('Error searching snippets:', err);
+      return { error: err.message };
+    }
+  });
+
+  ipcMain.handle('update-clip-content', async (event, clipId, newContent, newContentType) => {
+    const currentDb = getDb();
+    if (!currentDb) return { success: false, error: 'Database not initialized' };
+    try {
+      let content = newContent;
+      let contentType = newContentType; // If not provided, keep existing or default to 'text'
+      
+      const existingClip = currentDb.prepare('SELECT content_type FROM clips WHERE id = ?').get(clipId);
+      if (!existingClip) return { success: false, error: 'Clip not found' };
+
+      if (!contentType) {
+        contentType = existingClip.content_type; // Use existing if not changing type
+      }
+
+      let preview_text = '';
+      let metadata = {};
+
+      if (contentType === 'text' || contentType === 'link') {
+        preview_text = content.substring(0, 100); // Keep preview short
+        metadata = {
+          charCount: content.length,
+          wordCount: content.split(/\s+/).filter(Boolean).length,
+          lineCount: content.split(/\r\n|\r|\n/).length
+        };
+        if (contentType === 'link') {
+          metadata.url = content;
+        }
+      } else if (contentType === 'image') {
+        // For images, newContent would be a new dataURL.
+        // Preview text might be just "[Image]" or derived from a new title if that's also updated.
+        preview_text = '[Image]'; 
+        const img = nativeImage.createFromDataURL(content);
+        const size = img.getSize();
+        metadata = {
+          width: size.width,
+          height: size.height,
+        };
+      } else {
+        // For other types, generate a generic preview or handle as needed
+        preview_text = `[${contentType}]`;
+      }
+
+      currentDb.prepare(
+        'UPDATE clips SET data = ?, content_type = ?, preview_text = ?, metadata = ?, last_edited_at = datetime(\'now\') WHERE id = ?'
+      ).run(content, contentType, preview_text, JSON.stringify(metadata), clipId);
+      
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('clips-updated');
+      }
+      // Fetch the updated clip to return it, including any generated fields like last_edited_at
+      const updatedClip = currentDb.prepare('SELECT * FROM clips WHERE id = ?').get(clipId);
+      return { success: true, clip: updatedClip };
+    } catch (err) {
+      console.error('Error updating clip content:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('save-clip-as-file', async (event, clipId) => {
+    const currentDb = getDb();
+    if (!currentDb) return { success: false, error: 'Database not initialized' };
+    
+    const clip = currentDb.prepare('SELECT data, content_type, title FROM clips WHERE id = ?').get(clipId);
+    if (!clip) return { success: false, error: 'Clip not found' };
+
+    const defaultPath = clip.title ? clip.title.replace(/[/\\?%*:|"<>]/g, '-') : 'clip'; // Sanitize title for filename
+    let extension = '.txt';
+    if (clip.content_type === 'image') extension = '.png'; // Assuming data is PNG dataURL
+    else if (clip.content_type === 'link') extension = '.url'; // Windows URL file
+    // Add more types as needed
+
+    const { dialog } = require('electron');
+    const dialogResult = await dialog.showSaveDialog(mainWindow, { // Pass mainWindow to parent dialog
+      defaultPath: `${defaultPath}${extension}`,
+      filters: [
+        { name: 'Text Files', extensions: ['txt'] },
+        { name: 'PNG Images', extensions: ['png'] },
+        { name: 'URL Files', extensions: ['url'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+
+    if (dialogResult.canceled || !dialogResult.filePath) {
+      return { success: false, canceled: true };
+    }
+
+    try {
+      let dataToSave = clip.data;
+      if (clip.content_type === 'image') {
+        // Assuming clip.data is a DataURL (e.g., "data:image/png;base64,iVBORw0KGgo...")
+        // Need to convert DataURL to Buffer
+        const dataUrlParts = clip.data.split(',');
+        if (dataUrlParts.length < 2) throw new Error('Invalid image dataURL format');
+        dataToSave = Buffer.from(dataUrlParts[1], 'base64');
+      } else if (clip.content_type === 'link' && dialogResult.filePath.endsWith('.url')) {
+        // Create content for a .url file
+        dataToSave = `[InternetShortcut]\r\nURL=${clip.data}\r\n`;
+      }
+      // For text, clip.data is already a string
+
+      const fs = require('fs');
+      fs.writeFileSync(dialogResult.filePath, dataToSave);
+      return { success: true, filePath: dialogResult.filePath };
+    } catch (err) {
+      console.error('Error saving clip as file:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('append-to-clipboard', async (event, clipId) => {
+    const currentDb = getDb();
+    if (!currentDb) return { success: false, error: 'Database not initialized' };
+    
+    const clip = currentDb.prepare('SELECT data, content_type FROM clips WHERE id = ?').get(clipId);
+    if (!clip) return { success: false, error: 'Clip not found' };
+
+    if (clip.content_type === 'text' || clip.content_type === 'link') {
+      const currentClipboardText = clipboard.readText();
+      clipboard.writeText(currentClipboardText + clip.data);
+      return { success: true };
+    } else if (clip.content_type === 'image') {
+      // Appending images is more complex and platform-dependent.
+      // Could potentially save current clipboard image and new image to temp files,
+      // merge them using a library, then write back.
+      // For now, return not supported for images.
+      return { success: false, error: 'Appending images not supported yet.' };
+    }
+    return { success: false, error: 'Unsupported content type for appending.' };
+  });
+
+  ipcMain.handle('paste-clip-no-hide', async (event, clipId) => {
+    const currentDb = getDb();
+    if (!currentDb) return { success: false, error: 'Database not initialized' };
+    try {
+      const clip = currentDb.prepare('SELECT data, content_type FROM clips WHERE id = ?').get(clipId);
+      if (!clip) return { success: false, error: 'Clip not found' };
+
+      if (clip.content_type === 'text' || clip.content_type === 'link') {
+        clipboard.writeText(clip.data);
+      } else if (clip.content_type === 'image') {
+        const nativeImg = nativeImage.createFromDataURL(clip.data);
+        clipboard.writeImage(nativeImg);
+      } else {
+        return { success: false, error: 'Unsupported clip type for pasting' };
+      }
+
+      // Simulate Ctrl/Cmd+V
+      const robot = require('robotjs');
+      // Unlike 'paste-clip', this handler does NOT hide the OmniLaunch window.
+      robot.keyTap('v', process.platform === 'darwin' ? 'command' : 'control');
+      
+      currentDb.prepare('UPDATE clips SET last_pasted_at = datetime(\'now\'), times_pasted = times_pasted + 1 WHERE id = ?').run(clipId);
+      return { success: true };
+    } catch (err) {
+      console.error('Error in paste-clip-no-hide:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('delete-all-clips-in-scope', async (event, scope, folderId) => {
+    const currentDb = getDb();
+    if (!currentDb) return { success: false, error: 'Database not initialized' };
+    
+    try {
+      let query = 'DELETE FROM clips';
+      const params = [];
+
+      if (scope === 'activeFolder') {
+        if (folderId && folderId !== 'all' && folderId !== 'inbox') {
+          query += ' WHERE folder_id = ?';
+          params.push(folderId);
+        } else if (folderId === 'inbox' || folderId === null || folderId === undefined) {
+          query += ' WHERE folder_id IS NULL';
+        } else { // folderId is 'all', but scope is 'activeFolder' - this means delete ALL clips.
+                 // This case should ideally be confirmed by a more specific scope like 'allClips'.
+                 // For safety, if scope is 'activeFolder' and folderId is 'all', we do nothing or return error.
+          console.warn("Attempted 'Delete All in Folder' with 'All Folders' selected. Aborting for safety. Use 'Delete All Clips' scope.");
+          return { success: false, error: "Cannot delete all clips when scoped to 'Active Folder' and 'All Folders' is selected. Use a specific 'Delete All Clips' action."};
+        }
+      } else if (scope === 'allClips') {
+        // No WHERE clause, deletes all clips. This is dangerous and should be confirmed heavily.
+      } else {
+        return { success: false, error: 'Invalid scope for deleting clips.' };
+      }
+      
+      // Make sure there's a WHERE clause if we are not explicitly deleting ALL clips.
+      // This is a safeguard.
+      if (scope !== 'allClips' && !query.includes('WHERE')) {
+          return { success: false, error: 'Deletion query is unsafe (no WHERE clause for scoped delete).' };
+      }
+
+      const result = currentDb.prepare(query).run(...params);
+      
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('clips-updated');
+      }
+      return { success: true, affectedRows: result.changes };
+    } catch (err) {
+      console.error('Error deleting all clips in scope:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
 
   ipcMain.on('close-window', () => {
     const win = BrowserWindow.getFocusedWindow();
@@ -522,8 +1016,27 @@ app.whenReady().then(() => {
     }
   });
 
+  // Global shortcut for Paste Stack
+  // Make this configurable later
+  const ret = globalShortcut.register('CommandOrControl+Shift+V', () => {
+    console.log('CommandOrControl+Shift+V is pressed');
+    createPasteStackWindow();
+  });
+
+  if (!ret) {
+    console.error('Failed to register global shortcut CommandOrControl+Shift+V');
+  } else {
+    console.log('Global shortcut CommandOrControl+Shift+V registered successfully.');
+  }
+
   app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    // On macOS it's common to re-create a window in the app when the
+    // dock icon is clicked and there are no other windows open.
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createMainWindow(); // Changed from createWindow
+    } else if (mainWindow && !mainWindow.isVisible()) {
+      mainWindow.show();
+    }
   });
 });
 
@@ -539,7 +1052,9 @@ app.on('before-quit', () => {
   }
   const currentDb = getDb();
   if (currentDb) {
-    currentDb.close(); // Close the database connection
+    currentDb.close(); 
     console.log('Database connection closed.');
   }
+  globalShortcut.unregisterAll(); // Unregister all shortcuts
+  console.log('Global shortcuts unregistered.');
 });

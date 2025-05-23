@@ -45,6 +45,7 @@ function initializeDatabase(appInstance) {
       times_pasted INTEGER DEFAULT 0,
       is_pinned BOOLEAN DEFAULT 0,
       metadata TEXT,
+      last_edited_at DATETIME, -- Added last_edited_at
       FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL
     );
 
@@ -55,7 +56,58 @@ function initializeDatabase(appInstance) {
       FOREIGN KEY (clip_id) REFERENCES clips(id) ON DELETE CASCADE,
       FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS paste_stack_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      name TEXT -- Optional name for the run, e.g., "Work Session March 5th"
+    );
+
+    CREATE TABLE IF NOT EXISTS paste_stack_run_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, -- Added primary key for this table itself
+      run_id INTEGER NOT NULL,
+      clip_id INTEGER NOT NULL, -- This will store the original clip's ID
+      sequence_order INTEGER NOT NULL,
+      -- No need to store content_type, data, preview_text etc. here if clip_id links to 'clips' table.
+      -- If clips can be deleted from main history but we want to preserve stack item content, then denormalize.
+      -- For now, assume clips in 'clips' table are somewhat persistent or their deletion is acceptable for stack history.
+      FOREIGN KEY (run_id) REFERENCES paste_stack_runs(id) ON DELETE CASCADE,
+      FOREIGN KEY (clip_id) REFERENCES clips(id) ON DELETE CASCADE 
+    );
+
+    CREATE TABLE IF NOT EXISTS snippet_folders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS snippets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      folder_id INTEGER,
+      keyword TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_used_at DATETIME,
+      times_used INTEGER DEFAULT 0,
+      FOREIGN KEY (folder_id) REFERENCES snippet_folders(id) ON DELETE SET NULL
+    );
   `;
+  // Check if last_edited_at column exists in clips table and add it if not
+  // This is a simple way to handle migration for existing databases.
+  // More robust migration systems would track schema versions.
+  try {
+    const columnCheck = db.prepare("SELECT last_edited_at FROM clips LIMIT 1").get();
+  } catch (error) {
+    if (error.message.includes("no such column")) {
+      console.log("Adding last_edited_at column to clips table...");
+      db.exec("ALTER TABLE clips ADD COLUMN last_edited_at DATETIME");
+    } else {
+      // Other error
+      console.error("Error checking for last_edited_at column:", error);
+    }
+  }
+
   db.exec(schema);
   console.log(`Database initialized at ${dbPath}`);
   return db;

@@ -31,6 +31,7 @@ The application will use SQLite for local data storage. The `better-sqlite3` lib
    - `times_pasted` (INTEGER DEFAULT 0) - Count of how many times the clip has been pasted.
    - `is_pinned` (BOOLEAN DEFAULT 0)
    - `metadata` (TEXT) - JSON string to store additional type-specific metadata (e.g., image dimensions, file size, word/char count for text). Example: `{"width": 100, "height": 50, "fileSize": 1024, "wordCount": 250}`
+   - `last_edited_at` (DATETIME) - Timestamp of the last time the clip's content or title was edited.
 
 **2. `folders` Table:** Stores user-created folders.
    - `id` (INTEGER PRIMARY KEY AUTOINCREMENT)
@@ -46,6 +47,32 @@ The application will use SQLite for local data storage. The `better-sqlite3` lib
    - `clip_id` (INTEGER, FOREIGN KEY (`clips`.`id`) ON DELETE CASCADE)
    - `tag_id` (INTEGER, FOREIGN KEY (`tags`.`id`) ON DELETE CASCADE)
    - PRIMARY KEY (`clip_id`, `tag_id`)
+
+**5. `paste_stack_runs` Table:** Stores metadata for a "run" or instance of a paste stack session.
+   - `id` (INTEGER PRIMARY KEY AUTOINCREMENT)
+   - `created_at` (DATETIME DEFAULT CURRENT_TIMESTAMP) - When the stack was saved/cleared.
+   - `name` (TEXT) - Optional user-defined name for this paste stack session (e.g., "Work Session March 5th").
+
+**6. `paste_stack_run_items` Table:** Stores the clips that were part of a specific paste stack run.
+   - `id` (INTEGER PRIMARY KEY AUTOINCREMENT)
+   - `run_id` (INTEGER NOT NULL, FOREIGN KEY (`paste_stack_runs`.`id`) ON DELETE CASCADE)
+   - `clip_id` (INTEGER NOT NULL, FOREIGN KEY (`clips`.`id`) ON DELETE CASCADE) - References the original clip. Assumes clips might be deleted from the main history; if permanent record needed, more fields from `clips` would be denormalized here.
+   - `sequence_order` (INTEGER NOT NULL) - The order in which the item appeared in the stack for that run.
+
+**7. `snippet_folders` Table:** Stores user-created folders for organizing snippets.
+   - `id` (INTEGER PRIMARY KEY AUTOINCREMENT)
+   - `name` (TEXT NOT NULL UNIQUE)
+   - `created_at` (DATETIME DEFAULT CURRENT_TIMESTAMP)
+
+**8. `snippets` Table:** Stores user-created text snippets.
+   - `id` (INTEGER PRIMARY KEY AUTOINCREMENT)
+   - `title` (TEXT NOT NULL) - User-defined title for the snippet.
+   - `content` (TEXT NOT NULL) - The actual snippet content.
+   - `folder_id` (INTEGER, FOREIGN KEY (`snippet_folders`.`id`) ON DELETE SET NULL) - Optional folder for organization.
+   - `keyword` (TEXT) - Optional trigger keyword for auto-expansion (for future use).
+   - `created_at` (DATETIME DEFAULT CURRENT_TIMESTAMP)
+   - `last_used_at` (DATETIME) - Timestamp of the last time the snippet was used.
+   - `times_used` (INTEGER DEFAULT 0) - Count of how many times the snippet has been used.
 
 ## Initial Concept for Adaptable Window and Panels
 The application will support:

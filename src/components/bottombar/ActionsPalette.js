@@ -50,11 +50,54 @@ function ActionsPalette({ isOpen, onClose, selectedClipIds, activeClip, onAction
           return `${successCount} entr${successCount > 1 ? 'ies' : 'y'} deleted.`;
         } 
       });
+      actions.push({
+        id: 'saveAsFile',
+        label: 'Save as File...',
+        handler: async () => {
+          const result = await window.electron.invoke('save-clip-as-file', activeClip.id);
+          return result.success ? `Saved to: ${result.filePath}` : (result.canceled ? 'Save cancelled.' : `Error: ${result.error}`);
+        }
+      });
+      actions.push({
+        id: 'appendToClipboard',
+        label: 'Append to Clipboard (Text/Link only)',
+        disabled: !(activeClip && (activeClip.content_type === 'text' || activeClip.content_type === 'link')),
+        handler: async () => {
+          const result = await window.electron.invoke('append-to-clipboard', activeClip.id);
+          return result.success ? 'Appended to clipboard!' : `Error: ${result.error}`;
+        }
+      });
+      actions.push({
+        id: 'pasteNoHide',
+        label: 'Paste and Keep Window Open',
+        handler: async () => {
+          const result = await window.electron.invoke('paste-clip-no-hide', activeClip.id);
+          return result.success ? 'Pasted (window kept open)!' : `Error: ${result.error}`;
+        }
+      });
     }
-    actions.push({ id: 'saveAsSnippet', label: 'Save as Snippet (Coming Soon)', disabled: true });
+    // "Delete All Clips in View" - This is context-dependent (current folder/search results)
+    // The actual filtering/scope determination will be handled by App.js before calling IPC.
+    // This action is always available, but its impact depends on the current view context in App.js.
+    actions.push({
+      id: 'deleteAllInView',
+      label: 'Delete All Clips in Current View...', // ellipsis indicates further confirmation
+      handler: () => {
+        // This handler will call a prop passed from App.js to open the confirmation modal
+        if (onDeleteAllInView) onDeleteAllInView();
+        return "Opening delete all confirmation..."; // Status for App.js
+      }
+    });
+
+    actions.push({ 
+      id: 'saveAsSnippet', 
+      label: 'Save as Snippet...', 
+      disabled: !onSaveAsSnippet || !(activeClip && selectedClipIds.length === 1), 
+      handler: () => { if (onSaveAsSnippet) onSaveAsSnippet(); return "Opening save as snippet...";}
+    });
     
     setAvailableActions(actions);
-  }, [activeClip, selectedClipIds]);
+  }, [activeClip, selectedClipIds, onSaveAsSnippet, onDeleteAllInView]); // Added onDeleteAllInView
 
   // Filter actions based on searchTerm
   useEffect(() => {

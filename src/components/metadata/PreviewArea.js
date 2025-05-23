@@ -1,4 +1,6 @@
 import React from 'react';
+import { marked } from 'marked'; // Import marked
+import DOMPurify from 'dompurify'; // Import DOMPurify for sanitization
 
 // Helper function to open links externally
 const openExternalLink = (url) => {
@@ -10,22 +12,100 @@ const openExternalLink = (url) => {
   }
 };
 
-function PreviewArea({ clip }) {
-  if (!clip || !clip.data) {
+import React, { useState, useEffect } from 'react'; // Added useState, useEffect
+import { marked } from 'marked'; 
+import DOMPurify from 'dompurify'; 
+
+// Helper function to open links externally
+// ... (openExternalLink remains the same)
+
+function PreviewArea({ clip, onClipContentUpdate }) { // Added onClipContentUpdate prop
+  const [isEditingText, setIsEditingText] = useState(false);
+  const [editText, setEditText] = useState('');
+
+  useEffect(() => {
+    if (clip && clip.content_type === 'text') {
+      setEditText(clip.data || ''); // Initialize editText when clip changes or is text type
+    }
+    setIsEditingText(false); // Reset editing state when clip changes
+  }, [clip]);
+
+  if (!clip || clip.data === undefined || clip.data === null) { // Check for undefined or null data
     return <div className="p-3 text-gray-500">No preview available. (Data might be missing)</div>;
   }
-
-  const { content_type, data, title, metadata } = clip;
+  
+  const { id: clipId, content_type, data, title, metadata } = clip;
 
   let content;
 
   switch (content_type) {
     case 'text':
-      content = (
-        <pre className="whitespace-pre-wrap break-all text-sm p-3 bg-gray-50 rounded-md max-h-60 overflow-y-auto">
-          {data}
-        </pre>
-      );
+      // Basic check if content might be Markdown (e.g., contains #, *, -, etc.)
+      // This is a very naive check; a more robust one or a metadata flag would be better.
+      const mightBeMarkdown = /^(#+\s|\*\s|-\s|\[.*\]\(.*\)|`{1,3})/.test(data.substring(0, 200)); // Check start of text
+      if (mightBeMarkdown) {
+        const rawMarkup = marked.parse(data);
+        const sanitizedHtml = DOMPurify.sanitize(rawMarkup);
+        content = (
+          <div 
+            className="prose prose-sm max-w-none p-3 bg-gray-50 rounded-md max-h-60 overflow-y-auto"
+            dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
+          />
+        );
+      } else { // Plain text, not Markdown
+        if (isEditingText) {
+          content = (
+            <div className="p-1">
+              <textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                className="w-full h-40 p-2 border border-blue-500 rounded-md font-mono text-sm"
+                autoFocus
+              />
+              <div className="mt-2 space-x-2">
+                <button
+                  onClick={async () => {
+                    const updatedClip = await window.electron.invoke('update-clip-content', clipId, editText, 'text');
+                    if (updatedClip && updatedClip.success) {
+                      setIsEditingText(false);
+                      if (onClipContentUpdate) onClipContentUpdate(updatedClip.clip); // Notify parent
+                    } else {
+                      console.error("Error updating clip content:", updatedClip.error);
+                      // Handle error display if needed
+                    }
+                  }}
+                  className="px-3 py-1 text-xs bg-green-500 text-white rounded hover:bg-green-600"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => {
+                    setIsEditingText(false);
+                    setEditText(data); // Reset to original data
+                  }}
+                  className="px-3 py-1 text-xs bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          );
+        } else { // Displaying plain text
+          content = (
+            <div className="relative group">
+              <pre className="whitespace-pre-wrap break-all text-sm p-3 bg-gray-50 rounded-md max-h-60 overflow-y-auto">
+                {data}
+              </pre>
+              <button 
+                onClick={() => setIsEditingText(true)}
+                className="absolute top-1 right-1 px-1.5 py-0.5 text-xs bg-gray-200 text-gray-700 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-300 transition-opacity"
+              >
+                Edit
+              </button>
+            </div>
+          );
+        }
+      }
       break;
     case 'image':
       content = (

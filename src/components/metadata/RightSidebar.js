@@ -11,35 +11,31 @@ function RightSidebar({ selectedClip, requestFocusChange, isFocused }) { // Adde
   const titleRef = React.useRef(null); // Ref for EditableTitle or first focusable element
 
 
-  const fetchDetailedClipData = useCallback(async () => {
-    if (!selectedClip || !selectedClip.id) {
+  const fetchDetailedClipData = useCallback(async (clipToFetch) => {
+    if (!clipToFetch || !clipToFetch.id) {
       setDetailedClip(null);
       setError(null);
       return;
     }
     setError(null);
     try {
-      // First, assume selectedClip has most info (id, title, content_type, preview_text, metadata string)
-      // We primarily need to fetch the full 'data' field.
-      const clipDataResult = await window.electron.invoke('get-clip-data', selectedClip.id);
+      const clipDataResult = await window.electron.invoke('get-clip-data', clipToFetch.id);
 
       if (clipDataResult && !clipDataResult.error && clipDataResult.data !== undefined) {
-        // Combine the full data with the existing selectedClip info
-        // The 'metadata' in selectedClip should be a string, parse it for MetadataDisplay
-        let parsedMetadata = selectedClip.metadata;
-        if (typeof selectedClip.metadata === 'string') {
+        let parsedMetadata = clipToFetch.metadata;
+        if (typeof clipToFetch.metadata === 'string') {
             try {
-                parsedMetadata = JSON.parse(selectedClip.metadata);
+                parsedMetadata = JSON.parse(clipToFetch.metadata);
             } catch (e) {
-                console.error("Error parsing metadata string from selectedClip:", e);
-                // Keep metadata as is or set to empty object
+                console.error("Error parsing metadata string from clipToFetch:", e);
             }
         }
-
+        // Ensure we use the potentially updated title/other fields from clipToFetch
+        // if it was updated by an edit action before this full data fetch.
         setDetailedClip({
-          ...selectedClip, // Contains id, title, content_type, preview_text, source_app_name etc.
-          data: clipDataResult.data, // Add the full data payload
-          metadata: parsedMetadata, // Ensure metadata is an object if parsed
+          ...clipToFetch, 
+          data: clipDataResult.data, 
+          metadata: parsedMetadata, 
         });
       } else if (clipDataResult && clipDataResult.error) {
         console.error('Error fetching clip data:', clipDataResult.error);
@@ -55,25 +51,43 @@ function RightSidebar({ selectedClip, requestFocusChange, isFocused }) { // Adde
       setError(`Error loading clip details: ${err.message}`);
       setDetailedClip(null);
     }
-  }, [selectedClip]);
+  }, []); // Removed selectedClip from dependency array, will pass it directly
 
   useEffect(() => {
-    fetchDetailedClipData();
-  }, [fetchDetailedClipData]);
+    if (selectedClip && selectedClip.id) {
+      fetchDetailedClipData(selectedClip);
+    } else {
+      setDetailedClip(null); // Clear if no clip selected
+    }
+  }, [selectedClip, fetchDetailedClipData]);
 
   // Listen for 'clips-updated' to refresh details if the current clip was modified
   useEffect(() => {
     const handleClipsUpdated = () => {
       if (detailedClip && detailedClip.id) {
-        // console.log('RightSidebar received clips-updated, re-fetching details for clip:', detailedClip.id);
-        fetchDetailedClipData(); 
+        // Re-fetch the currently displayed clip to get any updates
+        // (e.g., title change, content change from another source, pin status)
+        // We need the full clip object to pass to fetchDetailedClipData
+        // This might require another IPC call if selectedClip prop doesn't auto-update
+        // For now, let's assume 'clips-updated' means we should re-evaluate 'selectedClip' prop
+        // This effect will re-run if selectedClip prop itself changes due to App.js re-fetching.
+        // If selectedClip prop doesn't change but its content in DB did, we need a direct fetch.
+        // Let's try fetching based on ID directly.
+        window.electron.invoke('get-clip-by-id', detailedClip.id).then(refetchedClip => {
+          if (refetchedClip && !refetchedClip.error) {
+            fetchDetailedClipData(refetchedClip); // Pass the potentially updated clip
+          } else {
+            // Clip might have been deleted
+            setDetailedClip(null);
+          }
+        });
       }
     };
     if (window.electron && window.electron.receive) {
         window.electron.receive('clips-updated', handleClipsUpdated);
     }
     return () => { /* Cleanup if window.electron.receive provides it */ };
-  }, [detailedClip, fetchDetailedClipData]);
+  }, [detailedClip, fetchDetailedClipData]); // selectedClip removed from here to avoid loop if it's not changing
 
   // Focus management
   useEffect(() => {
@@ -132,8 +146,21 @@ function RightSidebar({ selectedClip, requestFocusChange, isFocused }) { // Adde
       tabIndex={-1} 
     >
       {/* Consider passing a ref to EditableTitle if direct focus is needed on its input */}
-      <EditableTitle clipId={detailedClip.id} initialTitle={detailedClip.title || 'Untitled Clip'} />
-      <PreviewArea clip={detailedClip} />
+      <EditableTitle 
+        clipId={detailedClip.id} 
+        initialTitle={detailedClip.title || 'Untitled Clip'} 
+        // onTitleUpdate can be added if EditableTitle should inform parent directly
+      />
+      <PreviewArea 
+        clip={detailedClip} 
+        onClipContentUpdate={(updatedClipData) => {
+          // When content is edited in PreviewArea, update detailedClip state here
+          // This ensures RightSidebar has the latest version before any potential re-fetches.
+          setDetailedClip(prev => ({...prev, ...updatedClipData}));
+          // App.js will also get 'clips-updated' and refresh ClipsList, which might
+          // re-select the clip, triggering a full refresh of detailedClip via selectedClip prop.
+        }} 
+      />
       <MetadataDisplay clip={detailedClip} />
       <ClipTagsEditor clipId={detailedClip.id} />
     </div>

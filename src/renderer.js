@@ -2,138 +2,124 @@ import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import SinglePanelLayout from './layouts/SinglePanelLayout';
 import ThreePanelLayout from './layouts/ThreePanelLayout';
-// CommandInput is used within SinglePanelLayout, so direct import here might not be needed
-// import CommandInput from './components/CommandInput';
+import SnippetsViewLayout from './layouts/SnippetsViewLayout';
+import ActionsPalette from './components/bottombar/ActionsPalette';
+import SaveAsSnippetModal from './components/modals/SaveAsSnippetModal'; 
+import ConfirmDeleteAllModal from './components/modals/ConfirmDeleteAllModal'; // Import ConfirmDeleteAllModal
 
 function App() {
-  const [currentPanelView, setCurrentPanelView] = useState('threePanel'); // Default to threePanel for development
-  const [commandValue, setCommandValue] = useState(''); // For single panel CommandInput
+  const [currentAppView, setCurrentAppView] = useState('clipboard'); 
+  const [currentPanelView, setCurrentPanelView] = useState('threePanel'); 
+  const [commandValue, setCommandValue] = useState(''); 
   const [activeFolderId, setActiveFolderId] = useState('inbox'); 
   const [activeTagId, setActiveTagId] = useState(null); 
   const [selectedClipForMetadata, setSelectedClipForMetadata] = useState(null);
-  const [focusedPanel, setFocusedPanel] = useState('folders'); // 'folders', 'clips', 'metadata', 'search', 'filter', 'new'
-
-  // State for TopBar interactions
+  const [focusedPanel, setFocusedPanel] = useState('folders'); 
+  
   const [searchTerm, setSearchTerm] = useState('');
-  const [searchScope, setSearchScope] = useState('activeFolder'); // 'activeFolder' or 'all'
-  const [typeFilter, setTypeFilter] = useState('All'); // 'All', 'Text', 'Image', etc.
+  const [searchScope, setSearchScope] = useState('activeFolder');
+  const [typeFilter, setTypeFilter] = useState('All');
   const [isSearchResultsView, setIsSearchResultsView] = useState(false);
 
-  // State for triggering focus on TopBar elements
   const [searchBarFocusRequested, setSearchBarFocusRequested] = useState(false);
   const [typesFilterFocusRequested, setTypesFilterFocusRequested] = useState(false);
   const [newButtonFocusRequested, setNewButtonFocusRequested] = useState(false);
 
-  // State for BottomBar and ActionsPalette
   const [statusMessage, setStatusMessage] = useState('Ready.');
   const [isActionsPaletteOpen, setIsActionsPaletteOpen] = useState(false);
-  // These will be updated by ClipsList's onSelectionChange callback
   const [selectedClipIdsFromList, setSelectedClipIdsFromList] = useState([]);
   const [activeClipFromList, setActiveClipFromList] = useState(null); 
 
-  // Refs for focusing components (simplified example)
-  // In a real app, these might be managed within the layout components themselves
-  // const foldersListRef = useRef(null); // This would ideally be inside LeftSidebar
-  // const clipsListRef = useRef(null);   // This would ideally be inside ClipsList component
-  // const metadataPanelRef = useRef(null); // This would ideally be inside RightSidebar/MetadataPanel
+  const [isSaveAsSnippetModalOpen, setIsSaveAsSnippetModalOpen] = useState(false);
+  const [clipToSaveAsSnippet, setClipToSaveAsSnippet] = useState(null);
+  
+  const [isConfirmDeleteAllModalOpen, setIsConfirmDeleteAllModalOpen] = useState(false);
+  const [deleteScopeDetails, setDeleteScopeDetails] = useState({ scope: '', folderId: null, label: '' });
 
-  // Handler for command input changes
-  const handleCommandChange = (event) => {
-    setCommandValue(event.target.value);
+
+  const navigateToView = (viewName) => {
+    setCurrentAppView(viewName);
+    if (viewName === 'clipboard') {
+      setCurrentPanelView('threePanel'); 
+      setFocusedPanel('folders'); 
+    } else if (viewName === 'snippets') {
+      setFocusedPanel('snippetFolders'); 
+    }
+    setStatusMessage(`Navigated to ${viewName} view.`);
   };
 
-  // Basic way to toggle panel view (e.g., for testing, can be removed later)
-  // For example, pressing a key or a button could toggle this.
-  // This is just for demonstration and will be replaced by actual triggers.
   const handleFolderSelect = (folderId) => {
     setActiveFolderId(folderId || 'inbox');
     setActiveTagId(null);
     setSelectedClipForMetadata(null);
-    setIsSearchResultsView(false); // Exit search view when folder changes
-    setSearchTerm(''); // Clear search term
+    setIsSearchResultsView(false); 
+    setSearchTerm(''); 
     setFocusedPanel('clips');
-    console.log("Folder selected:", folderId || 'inbox');
+    console.log("Clipboard Folder selected:", folderId || 'inbox');
   };
 
   const handleTagSelect = (tagId) => {
     setActiveTagId(tagId);
     setSelectedClipForMetadata(null);
-    setIsSearchResultsView(false); // Exit search view
+    setIsSearchResultsView(false); 
     setSearchTerm('');
     setFocusedPanel('clips');
     console.log("Tag selected:", tagId);
   };
-
-  const handleClipSelectedForMetadata = (clip) => {
-    // This function is called by ClipsList when selection changes.
-    // 'clip' here is the primary selected clip object, or null if multi-select or no selection.
-    setSelectedClipForMetadata(clip); 
-  };
   
   const handleClipsListSelectionChange = (ids, primaryClip) => {
     setSelectedClipIdsFromList(ids);
-    setActiveClipFromList(primaryClip); // primaryClip can be null
+    setActiveClipFromList(primaryClip); 
     if (ids.length === 0) {
       setStatusMessage('No clips selected.');
-      setSelectedClipForMetadata(null); // Also clear metadata panel if no clips selected
+      setSelectedClipForMetadata(null); 
     } else if (ids.length === 1 && primaryClip) {
-      setStatusMessage(`Clip "${primaryClip.title || primaryClip.preview_text.substring(0,20)+'...'}" selected.`);
-      setSelectedClipForMetadata(primaryClip); // Update metadata panel with the single selected clip
+      setStatusMessage(`Clip "${primaryClip.title || (primaryClip.preview_text || '').substring(0,20)+'...'}" selected.`);
+      setSelectedClipForMetadata(primaryClip); 
     } else {
       setStatusMessage(`${ids.length} clips selected.`);
-      setSelectedClipForMetadata(null); // Clear metadata panel for multi-select
+      setSelectedClipForMetadata(null); 
     }
   };
-
 
   const handleFocusChange = (panelName) => {
     console.log("Request to change focus to panel:", panelName);
     setFocusedPanel(panelName);
+    setSearchBarFocusRequested(false);
+    setTypesFilterFocusRequested(false);
+    setNewButtonFocusRequested(false);
   };
 
-  // TopBar Handlers
   const handleTopBarSearchChange = (newSearchTerm, newSearchScope) => {
     setSearchTerm(newSearchTerm);
     setSearchScope(newSearchScope);
     setIsSearchResultsView(newSearchTerm.trim() !== ''); 
     setSelectedClipForMetadata(null); 
     if (newSearchTerm.trim() !== '') {
-      setFocusedPanel('search'); // Keep search bar focused if user is actively typing in it
+      setFocusedPanel('search'); 
     }
   };
 
   const handleStartTypeToSearchInClipsList = (char) => {
-    setSearchTerm(prev => prev + char); // Append character, or just char if starting fresh
+    setSearchTerm(prev => prev + char); 
     setIsSearchResultsView(true);
-    setFocusedPanel('search'); // This will be used to tell SearchBar to take focus
-    setSearchBarFocusRequested(true); // Explicitly request SearchBar to focus
-    // Clear other topbar focus requests
+    setFocusedPanel('search'); 
+    setSearchBarFocusRequested(true); 
     setTypesFilterFocusRequested(false);
     setNewButtonFocusRequested(false);
   };
 
   const handleTopBarFilterChange = (newFilterType) => {
     setTypeFilter(newFilterType);
-    setIsSearchResultsView(false); // Filtering implies browsing, not active search results view
+    setIsSearchResultsView(false); 
     setSelectedClipForMetadata(null);
-    // ClipsList will use this state to filter its current view (folder/all)
   };
   
   const handleTopBarActionDone = (actionType) => {
-    // This function is called after a new item (folder, tag, clip) is created via TopBar's NewButton.
-    // For new clips, ClipsList already listens to 'clips-updated'.
-    // For new folders/tags, LeftSidebar's lists will re-fetch due to their own IPC calls.
-    // This could be used for more complex coordination if needed, e.g., selecting the new item.
     console.log(`TopBar action done: ${actionType}`);
-    if (actionType === 'folder' || actionType === 'tag') {
-        // FoldersList and TagsList already re-fetch after adding.
-        // No explicit action needed here unless we want to select the new item.
-    }
-    // If a clip was added manually, 'clips-updated' will handle the refresh.
     setStatusMessage(`New ${actionType} added.`);
   };
 
-  // BottomBar and ActionsPalette Handlers
   const handleRequestPasteFromBottomBar = async (clipId) => {
     if (!clipId) {
       setStatusMessage('No clip selected to paste.');
@@ -153,12 +139,68 @@ function App() {
   
   const handleActionFromPaletteCompleted = (message) => {
     setStatusMessage(message);
-    // The 'clips-updated' event sent by main process handlers (delete, pin)
-    // should trigger ClipsList to refresh.
-    // If an action doesn't trigger 'clips-updated' but should refresh UI,
-    // you might need a more specific refresh mechanism here.
   };
 
+  const handleOpenSaveAsSnippetModal = async () => {
+    if (activeClipFromList && activeClipFromList.id) {
+      const fullClipData = await window.electron.invoke('get-clip-data', activeClipFromList.id);
+      if (fullClipData && !fullClipData.error) {
+        setClipToSaveAsSnippet({ ...activeClipFromList, ...fullClipData });
+        setIsSaveAsSnippetModalOpen(true);
+        setIsActionsPaletteOpen(false); 
+        setStatusMessage('Preparing to save clip as snippet...');
+      } else {
+        setStatusMessage(`Error fetching full clip data: ${fullClipData.error || 'Unknown error'}`);
+      }
+    } else {
+      setStatusMessage('No active clip selected to save as snippet.');
+    }
+  };
+
+  const handleCloseSaveAsSnippetModal = () => {
+    setIsSaveAsSnippetModalOpen(false);
+    setClipToSaveAsSnippet(null);
+  };
+
+  const handleSnippetSavedFromModal = () => {
+    setStatusMessage('Clip successfully saved as snippet!');
+  };
+
+  const handleOpenDeleteAllModal = () => {
+    let currentScopeDetermined = 'activeFolder'; 
+    let currentFolderIdForDelete = activeFolderId; 
+    let label = `clips in folder: ${activeFolderId === 'inbox' || !activeFolderId ? 'Inbox' : activeFolderId}`; 
+
+    if (isSearchResultsView) {
+      currentScopeDetermined = searchScope; 
+      label = `search results in ${searchScope === 'all' ? 'All Clips' : (currentFolderIdForDelete === 'inbox' || !currentFolderIdForDelete ? 'Inbox' : `folder ${currentFolderIdForDelete}`)}`;
+      if (searchScope === 'all') currentFolderIdForDelete = 'all'; 
+    } else {
+      if (activeFolderId === 'all') {
+        currentScopeDetermined = 'allClips'; 
+        label = 'All Clips (Everything!)';
+      }
+    }
+    
+    setDeleteScopeDetails({ scope: currentScopeDetermined, folderId: currentFolderIdForDelete, label });
+    setIsConfirmDeleteAllModalOpen(true);
+    setIsActionsPaletteOpen(false); 
+  };
+
+  const handleCloseDeleteAllModal = () => {
+    setIsConfirmDeleteAllModalOpen(false);
+  };
+
+  const handleConfirmDeleteAll = async () => {
+    setStatusMessage(`Deleting all clips in ${deleteScopeDetails.label}...`);
+    const result = await window.electron.invoke('delete-all-clips-in-scope', deleteScopeDetails.scope, deleteScopeDetails.folderId);
+    if (result && result.success) {
+      setStatusMessage(`${result.affectedRows || 0} clips deleted from ${deleteScopeDetails.label}.`);
+    } else {
+      setStatusMessage(`Error deleting clips: ${result ? result.error : 'Unknown error'}`);
+    }
+    setIsConfirmDeleteAllModalOpen(false);
+  };
 
   useEffect(() => {
     const handleGlobalKeyDown = (event) => {
@@ -171,8 +213,7 @@ function App() {
             setTypesFilterFocusRequested(false);
             setNewButtonFocusRequested(false);
             break;
-          case 'p': // Changed from 'p' to 't' to avoid conflict with default print/toggle panel.
-                    // Or ensure no other 'p' shortcut exists. For now, let's assume 'p' for TypesFilter focus
+          case 'p': 
             event.preventDefault();
             setFocusedPanel('filter');
             setTypesFilterFocusRequested(true);
@@ -181,12 +222,16 @@ function App() {
             break;
           case 'n':
             event.preventDefault();
-            setFocusedPanel('new');
-            setNewButtonFocusRequested(true);
-            setSearchBarFocusRequested(false);
-            setTypesFilterFocusRequested(false);
+            if (currentAppView === 'clipboard') { 
+              setFocusedPanel('new');
+              setNewButtonFocusRequested(true);
+              setSearchBarFocusRequested(false);
+              setTypesFilterFocusRequested(false);
+            } else if (currentAppView === 'snippets') {
+              console.log("Cmd+N in Snippets view - should trigger new snippet in SnippetsViewLayout");
+            }
             break;
-          case 'k': // Cmd+K for Actions Palette
+          case 'k': 
             event.preventDefault();
             setIsActionsPaletteOpen(prev => !prev);
             break;
@@ -202,60 +247,58 @@ function App() {
          setNewButtonFocusRequested(false);
       }
 
-      // Simple 'p' without Ctrl/Cmd to toggle panel view (dev utility)
-      if (event.key === 't' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) { 
-        // Using 't' to avoid conflicts.
-        setCurrentPanelView(prev => prev === 'single' ? 'threePanel' : 'single');
+      if (event.key === 't' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+        if (currentAppView === 'clipboard') {
+          setCurrentPanelView(prev => prev === 'single' ? 'threePanel' : 'single');
+        }
       }
 
       if (event.key === 'Escape') {
-        event.preventDefault(); // Prevent default Escape behavior (like exiting fullscreen)
+        event.preventDefault(); 
         
-        if (isActionsPaletteOpen) {
+        if (isConfirmDeleteAllModalOpen) {
+          setIsConfirmDeleteAllModalOpen(false);
+          setStatusMessage('Delete all action cancelled.');
+        } else if (isSaveAsSnippetModalOpen) {
+          setIsSaveAsSnippetModalOpen(false);
+          setClipToSaveAsSnippet(null);
+          setStatusMessage('Save as snippet cancelled.');
+        } else if (isActionsPaletteOpen) {
           setIsActionsPaletteOpen(false);
           setStatusMessage('Actions palette closed.');
-          // Optionally, try to return focus to where it was before opening palette,
-          // or to a sensible default like ClipsList. For now, just closes.
-        } else if (currentPanelView === 'single') {
+        } else if (currentAppView === 'clipboard' && currentPanelView === 'single') { 
           const commandInput = document.getElementById('commandInput');
           if (document.activeElement === commandInput && commandValue !== '') {
             setCommandValue('');
             setStatusMessage('Command input cleared.');
           } else {
-            // Only close window if command input is empty or not focused in single panel view
             if (window.electron && window.electron.send) {
               window.electron.send('close-window');
             }
           }
-        } else if (currentPanelView === 'threePanel') {
-          // Check TopBar components' internal states via refs or callbacks if they don't stop propagation.
-          // Assuming for now that dropdowns in TopBar (TypesFilter, NewButton) handle their own Escape
-          // and stop propagation if they were open. Same for NewClipModal.
-
-          if (searchTerm.trim() !== '' && focusedPanel === 'search') { // If search bar is focused and has text
+        } else if (currentAppView === 'clipboard' && currentPanelView === 'threePanel') { 
+          if (searchTerm.trim() !== '' && focusedPanel === 'search') { 
             setSearchTerm('');
-            setIsSearchResultsView(false); // Exit search results view
+            setIsSearchResultsView(false); 
             setStatusMessage('Search cleared.');
-            // Keep focus on search bar for new search, or move to clips list
-            // setSearchBarFocusRequested(true); // To keep it focused
           } else if (selectedClipIdsFromList.length > 0) {
             setSelectedClipIdsFromList([]);
             setActiveClipFromList(null);
             setSelectedClipForMetadata(null);
             setStatusMessage('Selection cleared.');
-            setFocusedPanel('clips'); // Focus clips list after clearing selection
-          } else if (searchTerm.trim() !== '') { // If search term exists but search bar not focused
+            setFocusedPanel('clips'); 
+          } else if (searchTerm.trim() !== '') { 
             setSearchTerm('');
             setIsSearchResultsView(false);
             setStatusMessage('Search cleared.');
             setFocusedPanel('clips'); 
           } else {
-            // If no modals, no search text, no selection -> then close window
-            // This is the final fallback for Escape in three-panel view.
             if (window.electron && window.electron.send) {
               window.electron.send('close-window');
             }
           }
+        } else if (currentAppView === 'snippets') {
+            console.log("Escape pressed in Snippets view. Currently no specific action beyond default (e.g. input blur).");
         }
       }
     };
@@ -263,49 +306,52 @@ function App() {
     return () => document.removeEventListener('keydown', handleGlobalKeyDown);
   }, [
     commandValue, currentPanelView, isSearchResultsView, searchTerm, 
-    selectedClipIdsFromList, isActionsPaletteOpen, focusedPanel // Added focusedPanel
+    selectedClipIdsFromList, isActionsPaletteOpen, focusedPanel, currentAppView,
+    isSaveAsSnippetModalOpen, isConfirmDeleteAllModalOpen, deleteScopeDetails // Added modal states
   ]); 
-
 
   return (
     <>
-      {currentPanelView === 'single' && (
+      {currentAppView === 'clipboard' && currentPanelView === 'single' && (
         <SinglePanelLayout
           commandValue={commandValue}
           onCommandChange={handleCommandChange}
         />
       )}
-      {currentPanelView === 'threePanel' && (
+      {currentAppView === 'clipboard' && currentPanelView === 'threePanel' && (
         <ThreePanelLayout
           activeFolderId={activeFolderId}
           onFolderSelect={handleFolderSelect}
           activeTagId={activeTagId}
           onTagSelect={handleTagSelect}
-          
-          onClipSelectedForMetadata={handleClipsListSelectionChange} 
+          onClipSelectedForMetadata={handleClipsListSelectionChange}
           clipsListSearchTerm={searchTerm}
           clipsListSearchScope={searchScope}
           clipsListTypeFilter={typeFilter}
           clipsListIsSearchResultsView={isSearchResultsView}
-          onStartTypeToSearch={handleStartTypeToSearchInClipsList} // Pass new prop
-          
-          selectedClipForMetadata={selectedClipForMetadata} 
-          
+          onStartTypeToSearch={handleStartTypeToSearchInClipsList}
+          selectedClipForMetadata={selectedClipForMetadata}
           onTopBarSearchChange={handleTopBarSearchChange}
           onTopBarFilterChange={handleTopBarFilterChange}
           onTopBarActionDone={handleTopBarActionDone}
-          
           onRequestFocusChange={handleFocusChange}
           searchBarFocusRequested={searchBarFocusRequested}
           typesFilterFocusRequested={typesFilterFocusRequested}
           newButtonFocusRequested={newButtonFocusRequested}
-
-          // BottomBar props
+          focusedPanel={focusedPanel}
           statusMessage={statusMessage}
           selectedClipIdsForBottomBar={selectedClipIdsFromList}
           activeClipForBottomBar={activeClipFromList}
           onRequestPasteForBottomBar={handleRequestPasteFromBottomBar}
           onShowActionsPaletteForBottomBar={handleShowActionsPalette}
+          onNavigate={navigateToView} 
+        />
+      )}
+      {currentAppView === 'snippets' && (
+        <SnippetsViewLayout 
+          onNavigate={navigateToView}
+          focusedPanel={focusedPanel} 
+          requestFocusChange={handleFocusChange} 
         />
       )}
       {isActionsPaletteOpen && (
@@ -315,6 +361,24 @@ function App() {
           selectedClipIds={selectedClipIdsFromList}
           activeClip={activeClipFromList}
           onActionCompleted={handleActionFromPaletteCompleted}
+          onSaveAsSnippet={handleOpenSaveAsSnippetModal} 
+          onDeleteAllInView={handleOpenDeleteAllModal} // Pass new handler
+        />
+      )}
+      {isSaveAsSnippetModalOpen && clipToSaveAsSnippet && (
+        <SaveAsSnippetModal
+          isOpen={isSaveAsSnippetModalOpen}
+          onClose={handleCloseSaveAsSnippetModal}
+          clipToSave={clipToSaveAsSnippet}
+          onSnippetSaved={handleSnippetSavedFromModal}
+        />
+      )}
+      {isConfirmDeleteAllModalOpen && (
+        <ConfirmDeleteAllModal
+          isOpen={isConfirmDeleteAllModalOpen}
+          onClose={handleCloseDeleteAllModal}
+          scopeLabel={deleteScopeDetails.label}
+          onConfirm={handleConfirmDeleteAll}
         />
       )}
     </>
