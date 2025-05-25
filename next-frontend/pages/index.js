@@ -1,56 +1,144 @@
-import React, { useState } from 'react';
-import { Input } from '@/components/ui/input'; // Import Shadcn Input
-import { Button } from '@/components/ui/button'; // Keep Button for testing interaction
+// In next-frontend/pages/index.js
+
+import React, { useState, useEffect, useRef } from 'react';
+import OnePanelLayout from '@/components/layouts/OnePanelLayout';
+import ThreePanelLayout from '@/components/layouts/ThreePanelLayout';
+import ClipboardLeftSidebar from '@/components/clipboard/ClipboardLeftSidebar'; // Import new component
+import { Button } from '@/components/ui/button';
 
 export default function LauncherPage() {
   const [commandValue, setCommandValue] = useState('');
+  const [currentLayout, setCurrentLayout] = useState('onePanel');
 
-  const handleCommandChange = (event) => { // Corrected the arrow function syntax
+  // State for Clipboard Sidebar
+  const [activeFolderId, setActiveFolderId] = useState('all'); // Default selected folder
+  const [activeTagId, setActiveTagId] = useState(null);    // Default selected tag
+
+  // IPC Test states
+  const [ipcResult, setIpcResult] = useState('');
+  const [ipcError, setIpcError] = useState('');
+  
+  // Ref for command input (primarily for OnePanelLayout)
+  // const commandInputRef = useRef(null); 
+
+  const handleCommandChange = (event) => {
     setCommandValue(event.target.value);
   };
 
   const handleCommandSubmit = () => {
-    // For now, just log it. Later this will trigger command execution.
-    console.log('Command submitted:', commandValue);
-    // alert(`Command: ${commandValue}`); // Optional: for quick visual feedback
-  };
+    console.log('Command submitted in LauncherPage:', commandValue);
+    const lowerCommand = commandValue.toLowerCase();
 
-  // Handle Enter key press on Input
-  const handleKeyPress = (event) => {
-    if (event.key === 'Enter') {
-      handleCommandSubmit();
+    if (lowerCommand === 'clipboard') {
+      setCurrentLayout('threePanel');
+      setCommandValue('');
+      setIpcError(''); 
+    } else if (lowerCommand === 'launcher') {
+      setCurrentLayout('onePanel');
+      setCommandValue('');
+      setIpcError('');
+    } else if (lowerCommand.trim() !== '') {
+      console.log(`Unknown command: ${commandValue}`);
+      setIpcError(`Unknown command: "${commandValue}"`);
+    } else {
+      setIpcError('');
     }
   };
+  
+  // Folder and Tag selection handlers for ClipboardLeftSidebar
+  const handleFolderSelect = (folderId) => {
+    setActiveFolderId(folderId);
+    setActiveTagId(null); // Reset tag selection when a folder is selected
+    console.log(`Folder selected: ${folderId}`);
+    // Future: Fetch clips for this folder
+  };
+
+  const handleTagSelect = (tagId) => {
+    setActiveTagId(tagId);
+    // setActiveFolderId(null); // Optional: Reset folder if tags span across folders or are global
+    console.log(`Tag selected: ${tagId}`);
+    // Future: Fetch clips for this tag
+  };
+
+
+  useEffect(() => {
+    const handleEscKey = (event) => {
+      if (event.key === 'Escape') {
+        if (currentLayout === 'threePanel') {
+          setCurrentLayout('onePanel');
+          setCommandValue('');
+        } else {
+          const activeElementId = document.activeElement && document.activeElement.id;
+          if (activeElementId === 'commandInput' && commandValue !== '') {
+            setCommandValue('');
+          } else if (commandValue === '') {
+            if (window.electron && window.electron.send) {
+              window.electron.send('close-window');
+            }
+          }
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleEscKey);
+    return () => {
+      document.removeEventListener('keydown', handleEscKey);
+    };
+  }, [commandValue, currentLayout]);
+
+  const testIpcCall = async () => {
+    setIpcResult('');
+    setIpcError('');
+    if (window.electron) {
+      try {
+        const result = await window.electron.invoke('test-ipc');
+        setIpcResult(result);
+      } catch (error) {
+        setIpcError(error.message || 'An unknown IPC error occurred.');
+      }
+    } else {
+      setIpcError('window.electron API not found.');
+    }
+  };
+  
+  // Define content for ThreePanelLayout
+  const clipboardSidebar = (
+    <ClipboardLeftSidebar
+      activeFolderId={activeFolderId}
+      onFolderSelect={handleFolderSelect}
+      activeTagId={activeTagId}
+      onTagSelect={handleTagSelect}
+    />
+  );
+  const middlePanelPlaceholder = <div className="p-4">Middle Panel (Clips List Placeholder)</div>;
+  const rightPanelPlaceholder = <div className="p-4">Right Panel (Metadata Placeholder)</div>;
 
   return (
-    <div className="flex flex-col items-center justify-start min-h-screen bg-background text-foreground p-4 pt-16 md:pt-24">
-      <div className="w-full max-w-xl"> {/* Container for command input and results */}
-        <h1 className="text-3xl font-semibold text-center mb-8">
-          OmniLaunch
-        </h1>
-        
-        <Input
-          type="text"
-          id="commandInput" // Added id for potential focus management from Electron
-          placeholder="Type a command or search..."
-          value={commandValue}
-          onChange={handleCommandChange}
-          onKeyPress={handleKeyPress}
-          className="text-lg p-4" // Larger text and padding for command input
+    <>
+      {currentLayout === 'onePanel' ? (
+        <OnePanelLayout
+          commandValue={commandValue}
+          onCommandChange={handleCommandChange}
+          onCommandSubmit={handleCommandSubmit}
         />
+      ) : ( // currentLayout === 'threePanel'
+        <ThreePanelLayout
+          leftPanel={clipboardSidebar}
+          middlePanel={middlePanelPlaceholder}
+          rightPanel={rightPanelPlaceholder}
+        />
+      )}
 
-        {/* Placeholder for command suggestions or results */}
-        <div className="mt-4 text-center">
-          <p className="text-muted-foreground text-sm">
-            {commandValue ? `Searching for: "${commandValue}"` : "Enter a command above."}
-          </p>
-        </div>
-
-        {/* Example button to test styling and interaction */}
-        <div className="mt-8 flex justify-center">
-            <Button onClick={() => alert('Test Button Clicked!')}>Test Shadcn Button</Button>
-        </div>
+      <div style={{ position: 'fixed', bottom: '10px', right: '10px', zIndex: 100 }}>
+        <Button variant="outline" onClick={() => setCurrentLayout(prev => prev === 'onePanel' ? 'threePanel' : 'onePanel')}>
+          Toggle Layout (Dev)
+        </Button>
+        <Button variant="outline" onClick={testIpcCall} style={{ marginLeft: '5px' }}>
+          Test IPC (Dev)
+        </Button>
+        {ipcResult && <p className="text-xs text-green-500 mt-1">IPC: {ipcResult}</p>}
+        {ipcError && <p className="text-xs text-red-500 mt-1">IPC Err: {ipcError}</p>}
       </div>
-    </div>
+    </>
   );
 }

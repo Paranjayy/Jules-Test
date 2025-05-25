@@ -1038,6 +1038,11 @@ app.whenReady().then(() => {
       mainWindow.show();
     }
   });
+
+  ipcMain.handle('test-ipc', async () => {
+    console.log('Main process: test-ipc invoked!');
+    return 'IPC test successful from main process!';
+  });
 });
 
 app.on('window-all-closed', function () {
