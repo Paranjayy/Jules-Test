@@ -4,9 +4,14 @@
   "private": true,
   "main": "src/main.js",
   "scripts": {
-    "start": "electron .",
+    "start": "npm run build && electron .",
     "build:tailwind": "tailwindcss -i ./src/styles.css -o ./dist/styles.css",
-    "watch:tailwind": "tailwindcss -i ./src/styles.css -o ./dist/styles.css --watch"
+    "watch:tailwind": "tailwindcss -i ./src/styles.css -o ./dist/styles.css --watch",
+    "dev:next": "cd next-frontend && next dev",
+    "build:next": "cd next-frontend && next build",
+    "start:next": "cd next-frontend && next start",
+    "export:next": "cd next-frontend && next build && next export",
+    "build": "npm run build:tailwind && npm run export:next"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.21",
@@ -19,6 +24,12 @@
     "marked": "^15.0.12",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "robotjs": "^0.6.0"
+    "robotjs": "^0.6.0",
+    "next": "latest",
+    "clsx": "latest",
+    "tailwind-merge": "latest",
+    "tailwindcss-animate": "latest",
+    "class-variance-authority": "latest",
+    "@radix-ui/react-slot": "latest"
   }
 }

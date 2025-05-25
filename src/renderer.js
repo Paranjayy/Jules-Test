@@ -1,18 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
-import SinglePanelLayout from './layouts/SinglePanelLayout';
+import SinglePanelLayout from './layouts/SinglePanelLayout'; // Ensure this is used for the launcher
 import ThreePanelLayout from './layouts/ThreePanelLayout';
 import SnippetsViewLayout from './layouts/SnippetsViewLayout';
 import ActionsPalette from './components/bottombar/ActionsPalette';
 import SaveAsSnippetModal from './components/modals/SaveAsSnippetModal'; 
-import ConfirmDeleteAllModal from './components/modals/ConfirmDeleteAllModal'; // Import ConfirmDeleteAllModal
+import ConfirmDeleteAllModal from './components/modals/ConfirmDeleteAllModal';
 
 function App() {
-  const [currentAppView, setCurrentAppView] = useState('clipboard'); 
-  const [currentPanelView, setCurrentPanelView] = useState('threePanel'); 
-  const [commandValue, setCommandValue] = useState(''); 
-  const [activeFolderId, setActiveFolderId] = useState('inbox'); 
-  const [activeTagId, setActiveTagId] = useState(null); 
+  const [currentAppView, setCurrentAppView] = useState('launcher'); // 1. Initial state is 'launcher'
+  const [currentPanelView, setCurrentPanelView] = useState('single'); // 1. Initial panel view is 'single' for launcher
+  const [commandValue, setCommandValue] = useState('');
+  const [activeFolderId, setActiveFolderId] = useState('inbox');
+  const [activeTagId, setActiveTagId] = useState(null);
   const [selectedClipForMetadata, setSelectedClipForMetadata] = useState(null);
   const [focusedPanel, setFocusedPanel] = useState('folders'); 
   
@@ -36,14 +36,22 @@ function App() {
   const [isConfirmDeleteAllModalOpen, setIsConfirmDeleteAllModalOpen] = useState(false);
   const [deleteScopeDetails, setDeleteScopeDetails] = useState({ scope: '', folderId: null, label: '' });
 
+  // 5. Basic commandValue handler
+  const handleCommandChange = (value) => {
+    setCommandValue(value);
+  };
 
   const navigateToView = (viewName) => {
     setCurrentAppView(viewName);
-    if (viewName === 'clipboard') {
-      setCurrentPanelView('threePanel'); 
-      setFocusedPanel('folders'); 
+    if (viewName === 'launcher') { // 2. Handle 'launcher' navigation
+      setCurrentPanelView('single');
+      setFocusedPanel('commandInput'); // Or whatever the focus target in SinglePanelLayout will be
+      setCommandValue(''); // Clear command value when navigating to launcher
+    } else if (viewName === 'clipboard') {
+      setCurrentPanelView('threePanel');
+      setFocusedPanel('folders');
     } else if (viewName === 'snippets') {
-      setFocusedPanel('snippetFolders'); 
+      setFocusedPanel('snippetFolders');
     }
     setStatusMessage(`Navigated to ${viewName} view.`);
   };
@@ -254,21 +262,48 @@ function App() {
       }
 
       if (event.key === 'Escape') {
-        event.preventDefault(); 
-        
+        event.preventDefault();
+
         if (isConfirmDeleteAllModalOpen) {
           setIsConfirmDeleteAllModalOpen(false);
           setStatusMessage('Delete all action cancelled.');
-        } else if (isSaveAsSnippetModalOpen) {
+          return; // Modal was open, action taken
+        }
+        if (isSaveAsSnippetModalOpen) {
           setIsSaveAsSnippetModalOpen(false);
           setClipToSaveAsSnippet(null);
           setStatusMessage('Save as snippet cancelled.');
-        } else if (isActionsPaletteOpen) {
+          return; // Modal was open, action taken
+        }
+        if (isActionsPaletteOpen) {
           setIsActionsPaletteOpen(false);
           setStatusMessage('Actions palette closed.');
-        } else if (currentAppView === 'clipboard' && currentPanelView === 'single') { 
+          return; // Palette was open, action taken
+        }
+
+        // 4. Update Escape Key Handling for 'launcher'
+        if (currentAppView === 'launcher') {
+          const commandInput = document.getElementById('commandInput'); // Assuming 'commandInput' is the ID
+          if (commandInput && document.activeElement === commandInput) {
+            if (commandValue !== '') {
+              setCommandValue('');
+              setStatusMessage('Command input cleared.');
+            } else {
+              // If commandValue is empty and input is focused, close window
+              if (window.electron && window.electron.send) {
+                window.electron.send('close-window');
+              }
+            }
+          } else if (commandValue === '') { // If input not focused but empty, also close (e.g. user clicked outside)
+             if (window.electron && window.electron.send) {
+                window.electron.send('close-window');
+              }
+          }
+        } else if (currentAppView === 'clipboard' && currentPanelView === 'single') {
+          // This case might need adjustment if 'single' panel is exclusively for 'launcher'
+          // For now, keeping original logic if it's still reachable.
           const commandInput = document.getElementById('commandInput');
-          if (document.activeElement === commandInput && commandValue !== '') {
+          if (commandInput && document.activeElement === commandInput && commandValue !== '') {
             setCommandValue('');
             setStatusMessage('Command input cleared.');
           } else {
@@ -276,10 +311,10 @@ function App() {
               window.electron.send('close-window');
             }
           }
-        } else if (currentAppView === 'clipboard' && currentPanelView === 'threePanel') { 
-          if (searchTerm.trim() !== '' && focusedPanel === 'search') { 
+        } else if (currentAppView === 'clipboard' && currentPanelView === 'threePanel') {
+          if (searchTerm.trim() !== '' && focusedPanel === 'search') {
             setSearchTerm('');
-            setIsSearchResultsView(false); 
+            setIsSearchResultsView(false);
             setStatusMessage('Search cleared.');
           } else if (selectedClipIdsFromList.length > 0) {
             setSelectedClipIdsFromList([]);
@@ -305,17 +340,19 @@ function App() {
     document.addEventListener('keydown', handleGlobalKeyDown);
     return () => document.removeEventListener('keydown', handleGlobalKeyDown);
   }, [
-    commandValue, currentPanelView, isSearchResultsView, searchTerm, 
+    commandValue, currentPanelView, isSearchResultsView, searchTerm,
     selectedClipIdsFromList, isActionsPaletteOpen, focusedPanel, currentAppView,
-    isSaveAsSnippetModalOpen, isConfirmDeleteAllModalOpen, deleteScopeDetails // Added modal states
-  ]); 
+    isSaveAsSnippetModalOpen, isConfirmDeleteAllModalOpen, deleteScopeDetails
+  ]);
 
   return (
     <>
-      {currentAppView === 'clipboard' && currentPanelView === 'single' && (
+      {/* 3. Update Rendering Logic */}
+      {currentAppView === 'launcher' && currentPanelView === 'single' && (
         <SinglePanelLayout
           commandValue={commandValue}
           onCommandChange={handleCommandChange}
+          // onCommandSubmit={handleCommandSubmit} // Optional: for future Enter key handling
         />
       )}
       {currentAppView === 'clipboard' && currentPanelView === 'threePanel' && (
@@ -344,16 +381,17 @@ function App() {
           activeClipForBottomBar={activeClipFromList}
           onRequestPasteForBottomBar={handleRequestPasteFromBottomBar}
           onShowActionsPaletteForBottomBar={handleShowActionsPalette}
-          onNavigate={navigateToView} 
+          onNavigate={navigateToView}
         />
       )}
       {currentAppView === 'snippets' && (
-        <SnippetsViewLayout 
+        <SnippetsViewLayout
           onNavigate={navigateToView}
-          focusedPanel={focusedPanel} 
-          requestFocusChange={handleFocusChange} 
+          focusedPanel={focusedPanel}
+          requestFocusChange={handleFocusChange}
         />
       )}
+      {/* Modals and ActionsPalette should render regardless of the currentAppView if their states are true */}
       {isActionsPaletteOpen && (
         <ActionsPalette
           isOpen={isActionsPaletteOpen}
